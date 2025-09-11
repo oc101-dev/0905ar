@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- A-Frame を読み込む -->
+    <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
+    <!-- AR.js を読み込む -->
+    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+    <title>AR 001</title>
+    <script>
+      AFRAME.registerComponent('gesture-detector', {
+        schema: {
+          element: { default: '' }
+        },
+        init: function() {
+          this.targetElement = this.data.element && document.querySelector(this.data.element);
+          if (!this.targetElement) {
+            this.targetElement = this.el;
+          }
+
+          this.internalState = {
+            previousState: null
+          };
+
+          this.emitGestureEvent = this.emitGestureEvent.bind(this);
+
+          this.targetElement.addEventListener('touchstart', this.emitGestureEvent);
+          this.targetElement.addEventListener('touchend', this.emitGestureEvent);
+          this.targetElement.addEventListener('touchmove', this.emitGestureEvent);
+        },
+        remove: function() {
+          this.targetElement.removeEventListener('touchstart', this.emitGestureEvent);
+          this.targetElement.removeEventListener('touchend', this.emitGestureEvent);
+          this.targetElement.removeEventListener('touchmove', this.emitGestureEvent);
+        },
+        emitGestureEvent(event) {
+          const currentState = this.getTouchState(event);
+          const previousState = this.internalState.previousState;
+
+          const gestureContinues = previousState &&
+            currentState &&
+            currentState.touchCount === previousState.touchCount;
+
+          const gestureEnded = previousState && !currentState;
+          const gestureStarted = currentState && !previousState;
+
+          if (gestureContinues) {
+            const eventName = this.getEventPrefix(currentState.touchCount) + 'move';
+            this.el.emit(eventName, currentState);
+          }
+
+          if (gestureEnded) {
+            const eventName = this.getEventPrefix(previousState.touchCount) + 'end';
+            this.el.emit(eventName, previousState);
+          }
+
+          if (gestureStarted) {
+            const eventName = this.getEventPrefix(currentState.touchCount) + 'start';
+            this.el.emit(eventName, currentState);
+          }
+
+          this.internalState.previousState = currentState;
+        },
+        getTouchState(event) {
+          if (event.touches.length === 0) return null;
+
+          const touchList = [];
+          for (let i = 0; i < event.touches.length; i++) {
+            touchList.push(event.touches[i]);
+          }
+
+          return {
+            touchCount: touchList.length,
+            touches: touchList
+          };
+        },
+        getEventPrefix(touchCount) {
+          const numberNames = ['one', 'two', 'three', 'many'];
+          return numberNames[Math.min(touchCount - 1, 3)] + 'finger';
+        }
+      });
+
+      AFRAME.registerComponent('gesture-handler', {
+        schema: {
+          minScale: { default: 0.3 },
+          maxScale: { default: 8 },
+          rotationFactor: { default: 5 }
+        },
+        init: function() {
+          this.initialScale = this.el.object3D.scale.clone();
+          this.scaleFactor = 1;
+
+          this.el.sceneEl.addEventListener('twofingermove', this.handleTwoFingerMove.bind(this));
+          this.el.sceneEl.addEventListener('onefingermove', this.handleOneFingerMove.bind(this));
+        },
+        handleTwoFingerMove: function(event) {
+          const previousTouches = event.detail.previousState.touches;
+          const currentTouches = event.detail.touches;
+
+          const previousDistance = this.calculateDistance(previousTouches);
+          const currentDistance = this.calculateDistance(currentTouches);
+
+          const distanceDelta = currentDistance / previousDistance;
+          const newScaleFactor = this.scaleFactor * distanceDelta;
+
+          if (newScaleFactor < this.data.minScale || newScaleFactor > this.data.maxScale) return;
+
+          this.scaleFactor = newScaleFactor;
+          this.el.object3D.scale.copy(this.initialScale.clone().multiplyScalar(this.scaleFactor));
+        },
+        handleOneFingerMove: function(event) {
+          const touch = event.detail.touches[0];
+          const previousTouch = event.detail.previousState.touches[0];
+
+          const deltaX = touch.clientX - previousTouch.clientX;
+          this.el.object3D.rotation.y += deltaX / 100 * this.data.rotationFactor;
+        },
+        calculateDistance: function(touches) {
+          const dx = touches[1].clientX - touches[0].clientX;
+          const dy = touches[1].clientY - touches[0].clientY;
+          return Math.sqrt(dx * dx + dy * dy);
+        }
+      });
+    </script>
+  </head>
+  <body style="margin: 0; overflow: hidden">
+	  
+    <!-- A-FrameにAR.jsを紐づけ、VRボタン非表示、深度バッファ追加 -->
+    <a-scene embedded arjs vr-mode-ui="enabled: false;" renderer="logarithmicDepthBuffer: true; colorManagement: true; physicallyCorrectLights: true;">
+	    
+      <!-- 3DCGモデルを読み込む -->
+      <a-assets>
+        <a-asset-item id="bob" src="./asset/neko.glb"></a-asset-item>
+        <a-asset-item id="tori" src="./asset/lamp.glb"></a-asset-item>
+
+      </a-assets>
+
+      <!-- ライティング設定 -->
+      <a-entity light="type: ambient; intensity: 2.5; color: #ffffff"></a-entity>
+      <a-entity light="type: directional; intensity: 2.0; color: #ffffff" position="-1 1 0.5"></a-entity>
+      <a-entity light="type: hemisphere; intensity: 1.5; color: #ffffff; groundColor: #888888"></a-entity>
+
+      <!-- マーカーの.pattファイルを読み込む -->
+      <a-marker type="pattern" url="./asset/pattern-marker.patt" gesture-detector>
+        <!-- 3Dモデルを呼び出す -->
+        <a-entity 
+          gltf-model="#bob" 
+          rotation="0 -90 90" 
+          scale="1 1 1" 
+          position="0 0 0"
+          gesture-handler="minScale: 0.2; maxScale: 10; rotationFactor: 1">
+        </a-entity>
+        <a-entity 
+          gltf-model="#tori" 
+          rotation="-90 0 0" 
+          scale="1 1 1" 
+          position="1 0 0"
+          gesture-handler="minScale: 0.2; maxScale: 10; rotationFactor: 1">
+        </a-entity>
+      </a-marker>
+
+      <!-- カメラを追加 -->
+      <a-entity camera></a-entity>
+    </a-scene>
+  </body>
+
+
+</html>
