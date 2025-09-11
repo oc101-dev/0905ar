@@ -8,121 +8,139 @@
     <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
     <!-- AR.js を読み込む -->
     <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
-    <title>AR 001</title>
+    <title>AR 002</title>
     <script>
-      AFRAME.registerComponent('gesture-detector', {
-        schema: {
-          element: { default: '' }
-        },
-        init: function() {
-          this.targetElement = this.data.element && document.querySelector(this.data.element);
-          if (!this.targetElement) {
-            this.targetElement = this.el;
+      window.onload = function() {
+        AFRAME.registerComponent('interactive-object', {
+          schema: {
+            minScale: { type: 'number', default: 0.2 },
+            maxScale: { type: 'number', default: 10.0 },
+            rotationSensitivity: { type: 'number', default: 5.0 },
+            scaleSensitivity: { type: 'number', default: 1.0 }
+          },
+
+          init: function() {
+            this.scale = 1.0;
+            this.rotation = 0;
+            this.initialScale = this.el.object3D.scale.clone();
+            
+            // マウス操作用の変数
+            this.isDragging = false;
+            this.previousMousePosition = { x: 0, y: 0 };
+            
+            // イベントリスナーの設定
+            this.el.sceneEl.addEventListener('mousedown', this.onMouseDown.bind(this));
+            this.el.sceneEl.addEventListener('mousemove', this.onMouseMove.bind(this));
+            this.el.sceneEl.addEventListener('mouseup', this.onMouseUp.bind(this));
+            this.el.sceneEl.addEventListener('wheel', this.onWheel.bind(this));
+            
+            // タッチ操作用の変数
+            this.touchCache = [];
+            this.previousTouchDistance = 0;
+            
+            // タッチイベントリスナーの設定
+            this.el.sceneEl.addEventListener('touchstart', this.onTouchStart.bind(this));
+            this.el.sceneEl.addEventListener('touchmove', this.onTouchMove.bind(this));
+            this.el.sceneEl.addEventListener('touchend', this.onTouchEnd.bind(this));
+          },
+
+          // マウス操作のハンドラー
+          onMouseDown: function(event) {
+            this.isDragging = true;
+            this.previousMousePosition = {
+              x: event.clientX,
+              y: event.clientY
+            };
+          },
+
+          onMouseMove: function(event) {
+            if (!this.isDragging) return;
+            
+            const deltaX = event.clientX - this.previousMousePosition.x;
+            this.rotation += deltaX * 0.01 * this.data.rotationSensitivity;
+            this.el.object3D.rotation.y = this.rotation;
+            
+            this.previousMousePosition = {
+              x: event.clientX,
+              y: event.clientY
+            };
+          },
+
+          onMouseUp: function() {
+            this.isDragging = false;
+          },
+
+          onWheel: function(event) {
+            event.preventDefault();
+            const scaleDelta = 1 - Math.sign(event.deltaY) * 0.1;
+            this.updateScale(scaleDelta);
+          },
+
+          // タッチ操作のハンドラー
+          onTouchStart: function(event) {
+            event.preventDefault();
+            this.touchCache = Array.from(event.touches);
+            
+            if (event.touches.length === 2) {
+              this.previousTouchDistance = this.getTouchDistance(this.touchCache[0], this.touchCache[1]);
+            }
+          },
+
+          onTouchMove: function(event) {
+            event.preventDefault();
+            
+            if (event.touches.length === 1) {
+              // 回転操作
+              const touch = event.touches[0];
+              const previousTouch = this.touchCache[0];
+              
+              if (previousTouch) {
+                const deltaX = touch.clientX - previousTouch.clientX;
+                this.rotation += deltaX * 0.01 * this.data.rotationSensitivity;
+                this.el.object3D.rotation.y = this.rotation;
+              }
+            } 
+            else if (event.touches.length === 2) {
+              // ピンチ操作による拡大縮小
+              const currentDistance = this.getTouchDistance(event.touches[0], event.touches[1]);
+              
+              if (this.previousTouchDistance > 0) {
+                const scaleDelta = currentDistance / this.previousTouchDistance;
+                this.updateScale(scaleDelta);
+              }
+              
+              this.previousTouchDistance = currentDistance;
+            }
+            
+            this.touchCache = Array.from(event.touches);
+          },
+
+          onTouchEnd: function(event) {
+            event.preventDefault();
+            this.touchCache = Array.from(event.touches);
+            
+            if (event.touches.length < 2) {
+              this.previousTouchDistance = 0;
+            }
+          },
+
+          // ユーティリティ関数
+          getTouchDistance: function(touch1, touch2) {
+            const dx = touch1.clientX - touch2.clientX;
+            const dy = touch1.clientY - touch2.clientY;
+            return Math.sqrt(dx * dx + dy * dy);
+          },
+
+          updateScale: function(scaleDelta) {
+            const newScale = this.scale * scaleDelta;
+            
+            if (newScale >= this.data.minScale && newScale <= this.data.maxScale) {
+              this.scale = newScale;
+              this.el.object3D.scale.copy(this.initialScale.clone().multiplyScalar(this.scale));
+            }
           }
-
-          this.internalState = {
-            previousState: null
-          };
-
-          this.emitGestureEvent = this.emitGestureEvent.bind(this);
-
-          this.targetElement.addEventListener('touchstart', this.emitGestureEvent);
-          this.targetElement.addEventListener('touchend', this.emitGestureEvent);
-          this.targetElement.addEventListener('touchmove', this.emitGestureEvent);
-        },
-        remove: function() {
-          this.targetElement.removeEventListener('touchstart', this.emitGestureEvent);
-          this.targetElement.removeEventListener('touchend', this.emitGestureEvent);
-          this.targetElement.removeEventListener('touchmove', this.emitGestureEvent);
-        },
-        emitGestureEvent(event) {
-          const currentState = this.getTouchState(event);
-          const previousState = this.internalState.previousState;
-
-          const gestureContinues = previousState &&
-            currentState &&
-            currentState.touchCount === previousState.touchCount;
-
-          const gestureEnded = previousState && !currentState;
-          const gestureStarted = currentState && !previousState;
-
-          if (gestureContinues) {
-            const eventName = this.getEventPrefix(currentState.touchCount) + 'move';
-            this.el.emit(eventName, currentState);
-          }
-
-          if (gestureEnded) {
-            const eventName = this.getEventPrefix(previousState.touchCount) + 'end';
-            this.el.emit(eventName, previousState);
-          }
-
-          if (gestureStarted) {
-            const eventName = this.getEventPrefix(currentState.touchCount) + 'start';
-            this.el.emit(eventName, currentState);
-          }
-
-          this.internalState.previousState = currentState;
-        },
-        getTouchState(event) {
-          if (event.touches.length === 0) return null;
-
-          const touchList = [];
-          for (let i = 0; i < event.touches.length; i++) {
-            touchList.push(event.touches[i]);
-          }
-
-          return {
-            touchCount: touchList.length,
-            touches: touchList
-          };
-        },
-        getEventPrefix(touchCount) {
-          const numberNames = ['one', 'two', 'three', 'many'];
-          return numberNames[Math.min(touchCount - 1, 3)] + 'finger';
-        }
-      });
-
-      AFRAME.registerComponent('gesture-handler', {
-        schema: {
-          minScale: { default: 0.3 },
-          maxScale: { default: 8 },
-          rotationFactor: { default: 5 }
-        },
-        init: function() {
-          this.initialScale = this.el.object3D.scale.clone();
-          this.scaleFactor = 1;
-
-          this.el.sceneEl.addEventListener('twofingermove', this.handleTwoFingerMove.bind(this));
-          this.el.sceneEl.addEventListener('onefingermove', this.handleOneFingerMove.bind(this));
-        },
-        handleTwoFingerMove: function(event) {
-          const previousTouches = event.detail.previousState.touches;
-          const currentTouches = event.detail.touches;
-
-          const previousDistance = this.calculateDistance(previousTouches);
-          const currentDistance = this.calculateDistance(currentTouches);
-
-          const distanceDelta = currentDistance / previousDistance;
-          const newScaleFactor = this.scaleFactor * distanceDelta;
-
-          if (newScaleFactor < this.data.minScale || newScaleFactor > this.data.maxScale) return;
-
-          this.scaleFactor = newScaleFactor;
-          this.el.object3D.scale.copy(this.initialScale.clone().multiplyScalar(this.scaleFactor));
-        },
-        handleOneFingerMove: function(event) {
-          const touch = event.detail.touches[0];
-          const previousTouch = event.detail.previousState.touches[0];
-
-          const deltaX = touch.clientX - previousTouch.clientX;
-          this.el.object3D.rotation.y += deltaX / 100 * this.data.rotationFactor;
-        },
-        calculateDistance: function(touches) {
-          const dx = touches[1].clientX - touches[0].clientX;
-          const dy = touches[1].clientY - touches[0].clientY;
-          return Math.sqrt(dx * dx + dy * dy);
-        }
-      });
+        });
+      };
     </script>
   </head>
   <body style="margin: 0; overflow: hidden">
@@ -132,8 +150,8 @@
 	    
       <!-- 3DCGモデルを読み込む -->
       <a-assets>
-        <a-asset-item id="bob" src="./asset/neko.glb"></a-asset-item>
-        <a-asset-item id="tori" src="./asset/lamp.glb"></a-asset-item>
+        <a-asset-item id="bob" src="./asset/bob.glb"></a-asset-item>
+        <a-asset-item id="tori" src="./asset/tori.glb"></a-asset-item>
 
       </a-assets>
 
@@ -143,21 +161,21 @@
       <a-entity light="type: hemisphere; intensity: 1.5; color: #ffffff; groundColor: #888888"></a-entity>
 
       <!-- マーカーの.pattファイルを読み込む -->
-      <a-marker type="pattern" url="./asset/pattern-marker.patt" gesture-detector>
+      <a-marker type="pattern" url="./asset/pattern-marker.patt">
         <!-- 3Dモデルを呼び出す -->
         <a-entity 
           gltf-model="#bob" 
           rotation="0 -90 90" 
           scale="1 1 1" 
           position="0 0 0"
-          gesture-handler="minScale: 0.2; maxScale: 10; rotationFactor: 1">
+          interactive-object="minScale: 0.2; maxScale: 10.0; rotationSensitivity: 5.0; scaleSensitivity: 1.0">
         </a-entity>
         <a-entity 
           gltf-model="#tori" 
           rotation="-90 0 0" 
           scale="1 1 1" 
           position="1 0 0"
-          gesture-handler="minScale: 0.2; maxScale: 10; rotationFactor: 1">
+          interactive-object="minScale: 0.2; maxScale: 10.0; rotationSensitivity: 5.0; scaleSensitivity: 1.0">
         </a-entity>
       </a-marker>
 
